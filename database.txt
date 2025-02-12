@@ -1,0 +1,31 @@
+import sqlite3
+
+# Connect to SQLite database (or create if it doesn't exist)
+conn = sqlite3.connect("college.db")
+cursor = conn.cursor()
+
+# Create table for college queries
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS college_queries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        question TEXT UNIQUE,
+        answer TEXT
+    )
+''')
+
+# Insert some sample queries
+sample_data = [
+    ("What are the admission requirements?", "You need to submit your 12th-grade mark sheet and entrance exam score."),
+    ("Where can I get my ID card?", "You can collect your ID card from the admin office."),
+    ("What is the college timing?", "College operates from 9:00 AM to 4:00 PM."),
+    ("Who is the principal?", "The principal of the college is Dr. Suresh Kumar."),
+]
+
+# Insert data only if the table is empty
+cursor.executemany("INSERT OR IGNORE INTO college_queries (question, answer) VALUES (?, ?)", sample_data)
+
+# Commit changes and close connection
+conn.commit()
+conn.close()
+
+print("Database setup complete!")

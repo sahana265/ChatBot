@@ -1,0 +1,101 @@
+from flask import Flask, render_template, request, jsonify
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+import sqlite3
+import voice_support  # Importing the voice module
+
+# Load the tokenizer and model
+try:
+    tokenizer = AutoTokenizer.from_pretrained("microsoft/DialoGPT-medium")
+    model = AutoModelForCausalLM.from_pretrained("microsoft/DialoGPT-medium")
+except Exception as e:
+    print(f"❌ Error loading AI model: {e}")
+    exit()
+
+app = Flask(__name__)
+
+# Global variable to store the conversation history
+chat_history_ids = None
+
+def get_answer_from_db(question):
+    """Fetch answer from SQLite database if question exists."""
+    try:
+        conn = sqlite3.connect("college.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT answer FROM college_queries WHERE question LIKE ?", (f'%{question}%',))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"❌ Database error: {e}")
+        return None
+
+@app.route("/")
+def index():
+    return render_template('chat.html')
+
+@app.route("/get", methods=["POST"])
+def chat():
+    global chat_history_ids
+    try:
+        user_message = request.form.get("msg")
+        if not user_message:
+            return jsonify({'response': 'No message received'})
+
+        # Check if the query exists in the database
+        db_answer = get_answer_from_db(user_message)
+        if db_answer:
+            voice_support.speak(db_answer)
+            return jsonify({'response': db_answer, 'audio': "static/bot_response.mp3"})
+
+        # If not found, use AI chatbot response
+        bot_response = get_chat_response(user_message)
+        voice_support.speak(bot_response)
+        return jsonify({'response': bot_response, 'audio': "static/bot_response.mp3"})
+    
+    except Exception as e:
+        print(f"❌ Error processing chat: {e}")
+        return jsonify({'response': 'Sorry, there was an error'})
+
+@app.route("/voice", methods=["GET"])
+def voice_chat():
+    """Handles voice input, gets a response, and converts to speech."""
+    try:
+        user_message = voice_support.recognize_speech()  # Speech-to-text
+        if not user_message or user_message.lower() == "sorry, i couldn't understand that.":
+            return jsonify({'response': "I couldn't understand your voice. Try again!"})
+
+        db_answer = get_answer_from_db(user_message)
+        if db_answer:
+            voice_support.speak(db_answer)
+            return jsonify({'response': db_answer, 'audio': "static/bot_response.mp3"})
+
+        bot_response = get_chat_response(user_message)
+        voice_support.speak(bot_response)
+        return jsonify({'response': bot_response, 'audio': "static/bot_response.mp3"})
+
+    except Exception as e:
+        print(f"❌ Voice processing error: {e}")
+        return jsonify({'response': 'Sorry, there was an error'})
+
+def get_chat_response(text):
+    """Generate a response using DialoGPT if no database answer is found."""
+    global chat_history_ids
+    try:
+        new_user_input_ids = tokenizer.encode(text + tokenizer.eos_token, return_tensors='pt')
+
+        if chat_history_ids is not None:
+            bot_input_ids = torch.cat([chat_history_ids, new_user_input_ids], dim=-1)
+        else:
+            bot_input_ids = new_user_input_ids
+
+        chat_history_ids = model.generate(bot_input_ids, max_length=1000, pad_token_id=tokenizer.eos_token_id)
+        response = tokenizer.decode(chat_history_ids[:, bot_input_ids.shape[-1]:][0], skip_special_tokens=True)
+        return response
+
+    except Exception as e:
+        print(f"❌ AI response error: {e}")
+        return "Sorry, I couldn't generate a response."
+
+if __name__ == '__main__':
+    app.run(debug=True)
